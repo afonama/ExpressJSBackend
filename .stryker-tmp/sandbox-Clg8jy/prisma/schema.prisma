@@ -1,0 +1,212 @@
+// Prisma schema for Tableflow restaurant management system
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  waiter
+  customer
+}
+
+enum TableStatus {
+  free
+  occupied
+  reserved
+  needs_bill
+}
+
+enum OrderStatus {
+  placed
+  preparing
+  ready
+  served
+  paid
+  cancelled
+}
+
+enum OrderItemStatus {
+  pending
+  cancelled
+}
+
+enum AssistanceType {
+  call_waiter
+  request_bill
+}
+
+enum AssistanceStatus {
+  pending
+  resolved
+}
+
+enum SplitType {
+  none
+  equal
+}
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  email          String   @unique
+  hashedPassword String   @map("hashed_password")
+  role           Role     @default(customer)
+  name           String
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  ordersCustomer Order[]        @relation("OrderCustomer")
+  ordersWaited   Order[]        @relation("OrderWaiter")
+  refreshTokens  RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  tokenHash      String    @unique @map("token_hash")
+  familyId       String    @map("family_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  expiresAt      DateTime  @map("expires_at")
+  usedAt         DateTime? @map("used_at")
+  revokedAt      DateTime? @map("revoked_at")
+  replacedByHash String?   @map("replaced_by_hash")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Table {
+  id       String      @id @default(uuid()) @db.Uuid
+  number   Int         @unique
+  capacity Int
+  qrCode   String      @unique @map("qr_code")
+  status   TableStatus @default(free)
+
+  orders             Order[]
+  assistanceRequests AssistanceRequest[]
+
+  @@map("tables")
+}
+
+model MenuCategory {
+  id        String @id @default(uuid()) @db.Uuid
+  name      String @unique
+  sortOrder Int    @default(0) @map("sort_order")
+
+  items MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id                String   @id @default(uuid()) @db.Uuid
+  categoryId        String   @map("category_id") @db.Uuid
+  name              String
+  description       String?
+  price             Decimal  @db.Decimal(10, 2)
+  imageUrl          String?  @map("image_url")
+  isAvailable       Boolean  @default(true) @map("is_available")
+  tags              String[] @default([])
+  stockCount        Int?     @map("stock_count")
+  lowStockThreshold Int      @default(5) @map("low_stock_threshold")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  category   MenuCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+  @@map("menu_items")
+}
+
+model Order {
+  id         String      @id @default(uuid()) @db.Uuid
+  tableId    String      @map("table_id") @db.Uuid
+  customerId String?     @map("customer_id") @db.Uuid
+  waiterId   String?     @map("waiter_id") @db.Uuid
+  status     OrderStatus @default(placed)
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  table    Table       @relation(fields: [tableId], references: [id], onDelete: Restrict)
+  customer User?       @relation("OrderCustomer", fields: [customerId], references: [id], onDelete: SetNull)
+  waiter   User?       @relation("OrderWaiter", fields: [waiterId], references: [id], onDelete: SetNull)
+  items    OrderItem[]
+  bill     Bill?
+  feedback Feedback?
+
+  @@index([tableId])
+  @@index([customerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String          @id @default(uuid()) @db.Uuid
+  orderId    String          @map("order_id") @db.Uuid
+  menuItemId String          @map("menu_item_id") @db.Uuid
+  quantity   Int
+  notes      String?
+  unitPrice  Decimal         @map("unit_price") @db.Decimal(10, 2)
+  status     OrderItemStatus @default(pending)
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Bill {
+  id         String    @id @default(uuid()) @db.Uuid
+  orderId    String    @unique @map("order_id") @db.Uuid
+  subtotal   Decimal   @db.Decimal(10, 2)
+  tax        Decimal   @db.Decimal(10, 2)
+  total      Decimal   @db.Decimal(10, 2)
+  splitType  SplitType @default(none) @map("split_type")
+  splitCount Int       @default(1) @map("split_count")
+  amountPaid Decimal   @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  paid       Boolean   @default(false)
+  paidAt     DateTime? @map("paid_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("bills")
+}
+
+model AssistanceRequest {
+  id         String           @id @default(uuid()) @db.Uuid
+  tableId    String           @map("table_id") @db.Uuid
+  type       AssistanceType
+  status     AssistanceStatus @default(pending)
+  createdAt  DateTime         @default(now()) @map("created_at")
+  resolvedAt DateTime?        @map("resolved_at")
+
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("assistance_requests")
+}
+
+model Feedback {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @unique @map("order_id") @db.Uuid
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("feedbacks")
+}
